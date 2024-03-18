@@ -76,6 +76,36 @@ class DataRefactorer:
                                    keys=['open', 'high', 'low', 'close', 'bar_count', 'volume', 'average'])
         return resampled_bars.dropna()
 
+    @staticmethod
+    def scale_bars(bars):
+        no_we_bars = bars.loc[bars.index.weekday < 5]
+        daily_hi = no_we_bars['high'].resample('D').max().dropna()
+        daily_lo = no_we_bars['low'].resample('D').min().dropna()
+
+        daily_hilo = (daily_hi - daily_lo).dropna()
+        shifted_daily_hilo = daily_hilo.shift(1)
+        volatility_ts = shifted_daily_hilo.ewm(20, min_periods=18).std()
+        scaling_coefficient = (1 / volatility_ts).dropna()
+
+        scaled_bars_list = list()
+        base_price = None
+        last_close = None
+        for c in scaling_coefficient.index:
+            edate = c.replace(hour=23, minute=59)
+            day_bars = bars.loc[c:edate]
+            if base_price is None:
+                base_price = day_bars['open'].iloc[0]
+                last_close = day_bars['open'].iloc[0]
+            bar_diff = (day_bars[['open', 'high', 'low', 'close', 'average']]-base_price) * scaling_coefficient.loc[c]
+            new_bars = last_close + bar_diff
+            new_bars = pd.concat([new_bars, day_bars[['bar_count', 'volume']]], axis=1)
+            scaled_bars_list.append(new_bars)
+            base_price = day_bars['close'].iloc[-1]
+            last_close = new_bars['close'].iloc[-1]
+
+        df = pd.concat(scaled_bars_list, axis=0).sort_index()
+        return df
+
 
 def main():
     ticker = 'CL'
@@ -85,7 +115,8 @@ def main():
     adj_bars, adjustments = ra.create_roll_adjusted_time_serie()
     bar_freq = '30min'
     new_bars = ra.resample_bars(adj_bars, freq=bar_freq)
-    new_bars.to_csv(rf"data\adj-{ticker}-{bar_freq}.csv")
+    scaled_bars = ra.scale_bars(new_bars)
+    scaled_bars.to_csv(rf"data\scaled_adj-{ticker}-{bar_freq}.csv")
     return
 
 if __name__ == "__main__":

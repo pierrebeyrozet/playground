@@ -11,24 +11,27 @@ class Labeller:
 
     def get_events(self, data, look_back):
         is_catalyst = []
-        for i in range(data.shape[0]):
-            if i < look_back:
-                is_catalyst.append(False)
-            else:
-                section = data.iloc[i-look_back:i]
-                is_catalyst.append(self.catalyst(section))
-        is_event_ts = pd.Series(index=data.index, data=is_catalyst)
-        return is_event_ts.loc[is_event_ts].index
+        for i in range(look_back, data.shape[0]):
+            section = data.iloc[i - look_back:i]
+            if self.catalyst(section):
+                is_catalyst.append(section.index[-1])
+
+        return pd.DatetimeIndex(is_catalyst)
 
     @staticmethod
-    def get_triple_barrier_label(close, events, b_up, b_down, timeout, vol_scaled=False, zero_when_timedout=False):
+    def get_triple_barrier_label(close, events, b_up, b_down, timeout, scaling_ts=None, zero_when_timedout=False):
         labels = dict()
         for e in events:
             section = (close.loc[e: e + timeout] - close.loc[e]).to_frame('diff2start')
-            section['up'] = section['diff2start']-b_up
-            section['down'] = section['diff2start']+b_down
+            if scaling_ts is None:
+                section['up'] = section['diff2start']-b_up
+                section['down'] = -section['diff2start']-b_down
+            else:
+                scaling_section = scaling_ts.loc[e: e + timeout]
+                section['up'] = section['diff2start'] - b_up * scaling_section
+                section['down'] = -section['diff2start'] - b_down * scaling_section
             touch_ups = section.loc[section['up'] > 0]
-            touch_downs = section.loc[section['down'] < 0]
+            touch_downs = section.loc[section['down'] > 0]
             if touch_ups.shape[0] > 0 and touch_downs.shape[0] > 0:
                 up1st = touch_ups.index[0]
                 down1st = touch_downs.index[0]
@@ -72,6 +75,7 @@ def generate_null_distrib(close, events, length, iter):
         rand_res.append(np.mean(rand_potential))
 
     return pd.Series(rand_res)
+
 
 def breakout_up(df):
     if df['close'].iloc[-1] > df['high'].iloc[:df.shape[0]-1].max():
@@ -135,10 +139,23 @@ def investigation(func):
     return
 
 
+def main():
+    dir_path = Path(__file__).parent.parent.resolve() / 'b_data_refactoring' / 'data'
+    data = pd.read_csv(dir_path / 'scaled_adj-CL-30min.csv', index_col='datetime', parse_dates=True)
+    labeller = Labeller(breakout_up)
+    events = labeller.get_events(data, 20)
+    vol_scale = data['close'].diff(1).rolling(48).std()*np.sqrt(24)
+    labels = labeller.get_triple_barrier_label(data['close'], events, 2, 2, scaling_ts=vol_scale,
+                                               timeout=timedelta(days=50),
+                                               zero_when_timedout=True)
+    duration = (labels['outcome_time']-labels.index).dt.total_seconds() / 86400
+    return
 
 if __name__ == "__main__":
+    main()
     #label_search(breakout_up)
     #backtest = get_labels(breakout_up)
-    investigation(breakout_up)
+    #investigation(breakout_up)
+
     a = 0
 

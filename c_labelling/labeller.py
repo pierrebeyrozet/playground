@@ -3,6 +3,8 @@ import pandas as pd
 from pathlib import Path
 from datetime import timedelta
 import matplotlib.pyplot as plt
+import mplfinance as mpf
+from c_labelling.catalysts import breakout_up
 
 
 class Labeller:
@@ -77,10 +79,10 @@ def generate_null_distrib(close, events, length, iter):
     return pd.Series(rand_res)
 
 
-def breakout_up(df):
-    if df['close'].iloc[-1] > df['high'].iloc[:df.shape[0]-1].max():
-        return True
-    return False
+# def breakout_up(df):
+#     if df['close'].iloc[-1] > df['high'].iloc[:df.shape[0]-1].max():
+#         return True
+#     return False
 
 
 def label_search(func):
@@ -142,14 +144,37 @@ def investigation(func):
 def main():
     dir_path = Path(__file__).parent.parent.resolve() / 'b_data_refactoring' / 'data'
     data = pd.read_csv(dir_path / 'scaled_adj-CL-30min.csv', index_col='datetime', parse_dates=True)
+
     labeller = Labeller(breakout_up)
     events = labeller.get_events(data, 20)
+
+    #chart_signal(data, events)
+
     vol_scale = data['close'].diff(1).rolling(48).std()*np.sqrt(24)
     labels = labeller.get_triple_barrier_label(data['close'], events, 2, 2, scaling_ts=vol_scale,
                                                timeout=timedelta(days=50),
                                                zero_when_timedout=True)
+    chart_signal(data, labels)
     duration = (labels['outcome_time']-labels.index).dt.total_seconds() / 86400
     return
+
+def chart_signal(df, labels):
+    upper_bol = df['close'].ewm(span=20).mean() + df['close'].diff(1).ewm(span=20).std() * 2
+    win_event = labels.loc[labels['label'] == 1, 'label']
+    win_events_price = df.loc[win_event.index, 'close']
+    win_events_price = win_events_price.reindex(df.index)
+
+    loss_event = labels.loc[labels['label'] == -1, 'label']
+    loss_events_price = df.loc[loss_event.index, 'close']
+    loss_events_price = loss_events_price.reindex(df.index)
+
+    win_events_plot = mpf.make_addplot(win_events_price, type='scatter', markersize=50, marker='^', color='green')
+    loss_events_plot = mpf.make_addplot(loss_events_price, type='scatter', markersize=50, marker='^', color='red')
+    ubol_plot = mpf.make_addplot(upper_bol, type='line', color='blue')
+    mpf.plot(df, addplot=[win_events_plot, loss_events_plot, ubol_plot])
+
+    return
+
 
 if __name__ == "__main__":
     main()
